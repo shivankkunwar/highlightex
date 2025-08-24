@@ -8,9 +8,16 @@ function debounce(func, delay){
 
 document.addEventListener("selectionchange", debounce(showChip, 75));
 
+let ignoreNextOutsideClick = false;
+let interactingWithChip = false;
+
 function showChip(){
     const selection = document.getSelection();
     if(!selection.rangeCount || selection.toString().trim().length < 1){
+        const existing = document.getElementById('highlight-saver-chip');
+        if (existing && interactingWithChip) {
+            return;
+        }
         removeChip();
         return;
     }
@@ -34,9 +41,13 @@ function showChip(){
     chip.style.backgroundClip = 'padding-box';
     chip.innerHTML = `
         <button id="save-highlight" style="background:#111827;color:#fff;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px">Save highlight</button>
-        <button id="dismiss-chip" style="background:transparent;border:1px solid #e5e7eb;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:12px">×</button>
+        <button id="dismiss-chip" style="background:transparent;border:1px solid #e5e7eb;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:12px;color:#111827">×</button>
     `;
     document.body.appendChild(chip);
+    chip.addEventListener('pointerdown', () => {
+        interactingWithChip = true;
+        setTimeout(() => { interactingWithChip = false; }, 250);
+    });
 
     const chipRect = chip.getBoundingClientRect();
     let left = rect.left + window.scrollX + (rect.width / 2) - (chipRect.width / 2);
@@ -77,6 +88,7 @@ function showChip(){
     });
 
     document.getElementById('dismiss-chip').addEventListener('click', removeChip);
+    ignoreNextOutsideClick = true;
     document.addEventListener('click', outsideClickListener);
     document.addEventListener('keydown', escListener);
 }
@@ -90,6 +102,7 @@ function removeChip() {
 
 function outsideClickListener(event) {
     const chip = document.getElementById('highlight-saver-chip');
+    if (ignoreNextOutsideClick) { ignoreNextOutsideClick = false; return; }
     if (chip && !chip.contains(event.target)) removeChip();
 }
 
