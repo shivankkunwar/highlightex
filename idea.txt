@@ -1,0 +1,13 @@
+Task
+Build a Chrome extension that allows users to highlight text on any webpage and save highlights locally.
+
+Features
+User selects text on any page.
+
+Show a small popup (“Save Highlight?”) near selection.
+
+Clicking the extension icon (in Chrome toolbar) opens a popup that shows a scrollable list of all saved highlights.
+
+Allow deleting highlights.
+
+Optional: Get a quick AI summary inside the popup via a "Summarize" button. Connect to Gemini API for this.

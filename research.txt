@@ -1,0 +1,273 @@
+Below is a research‑driven UX blueprint for your Chrome extension—designed to stay strictly within the features you listed, but to squeeze out the best possible experience from them.
+
+---
+
+## 0) What “great” looks like (constraints we must respect)
+
+* **Chrome action popup is small and transient.** It opens from the toolbar icon, can’t exceed \~**800×600 px** and **auto‑closes** when focus moves away. This shapes the information density and interaction style of the popup. ([GitHub][1], [Chrome for Developers][2])
+* **Store highlights locally using `chrome.storage`.** Use `storage.local` (10 MB quota; higher via `unlimitedStorage`) and treat `storage.sync` only for tiny preferences (≈100 KB total; 8 KB per item). ([Chrome for Developers][3])
+* **Position the on‑page “Save highlight?” chip accurately at the selection.** Use the **Selection/Range API** to get coordinates (`document.getSelection() → getRangeAt(0) → range.getBoundingClientRect()`), and fall back to `getClientRects()` for multi‑line selections. ([MDN Web Docs][4])
+* **Keep floating UI readable and on‑screen.** Follow established “anchored overlay” behavior: **flip/shift** placement when near edges to avoid clipping. (You can implement this logic yourself or mirror the patterns from Floating UI / Popper.) ([Floating UI][5], [Popper.js][6])
+* **Accessibility guardrails.**
+
+  * Minimum hit target **24×24 CSS px** (WCAG 2.2). ([W3C][7])
+  * Popover/dialog semantics and focus management per WAI‑ARIA (use a **non‑modal dialog** or a small **menu**; always provide a keyboard path and close on Esc). ([MDN Web Docs][8], [W3C][9])
+  * Material snackbars (toasts) are the accepted pattern for brief confirmations with an **Undo** action. ([ui-deploy.com][10])
+* **Privacy & permissions.** Only request the minimum (e.g., `activeTab`, `storage`, `scripting`, and precise host permissions if you need autoinjection) and disclose data handling clearly. (Recent incidents show user sensitivity to overreach.) ([Chrome for Developers][11])
+* **Optional AI summary** should use OpenAI’s **Responses API**; be mindful of token/rate limits and show failure states. ([OpenAI Platform][12])
+
+---
+
+## 1) Information architecture & mental model
+
+**Two surfaces only** (no more, no less):
+
+1. **On‑page mini chip** (appears when user selects text):
+   Purpose: one ultra‑clear decision—**Save** or **dismiss**.
+
+2. **Toolbar popup** (appears when user clicks your extension icon):
+   Purpose: **browse saved highlights** (scrollable list), **delete** items, and **Summarize** (optional).
+
+This leanness avoids scope creep, respects popup constraints, and aligns with “**recognition over recall**” heuristics: the list surfaces the content immediately, with metadata to help recognition. ([media.nngroup.com][13])
+
+---
+
+## 2) Happy-path flows (end‑to‑end)
+
+### A) Create & save from any web page
+
+1. **User selects text** (mouse or keyboard).
+2. **We show a floating chip** 12–16 px offset above/below the selection (depending on space):
+
+   * Primary button: **Save highlight**
+   * Secondary: **Dismiss** (×)
+   * Keyboard: **Enter** saves, **Esc** dismisses.
+   * The chip **flips/shifts** to stay visible if near viewport edges. ([Floating UI][5], [Popper.js][6])
+3. **On save:**
+
+   * Write `{id, text, url, pageTitle, createdAt}` to `chrome.storage.local`.
+   * Show a **snackbar** at the bottom edge (non‑blocking): “**Saved** • Undo”. Auto dismiss in 3–4 s; **Undo** removes the new item. ([ui-deploy.com][10])
+
+> **Why this works:** The chip uses Range/Selection positioning so it feels attached to the content; the snackbar gives fast, non‑modal feedback—no confirmation dialog needed. ([MDN Web Docs][14])
+
+### B) Browse in the popup (toolbar icon)
+
+**Layout (within 800×600 max):**
+
+* **Header:** Extension name • **Summarize** (optional)
+* **List region (scrollable):** Highlights in **reverse chronological** order
+
+  * Each row: **favicon** (using Chrome’s `_favicon` virtual path), **page title** (domain), 1–2 lines of the highlight text, **kebab menu** (Delete). Click row opens the **source URL** in a new tab. ([Chrome for Developers][15])
+* **Empty state:** “No highlights yet—Select text on a page and choose **Save highlight**.” (One‑line instruction adheres to minimalist guidance.) ([media.nngroup.com][13])
+
+**Micro-interactions:**
+
+* Delete uses a **snackbar Undo** instead of a confirm dialog (faster, reversible). ([ui-deploy.com][10])
+* The popup is navigable with keyboard: **Tab** through controls; list items are **buttons/links**; Delete is a **button** with an accessible label.
+
+### C) Optional: Summarize (in the popup)
+
+* Press **Summarize** → a small **in‑place result block** appears at the top of the list.
+* Input to the model: e.g., the **N most recent highlights** (keep it lightweight to stay within token/time limits); show a simple spinner and an **inline error with Retry** if the network/API fails. Use OpenAI’s **Responses API** (JS SDK or fetch). ([OpenAI Platform][12])
+
+---
+
+## 3) Detailed UI spec (components, states, copy)
+
+### 3.1 On‑page chip (“Save highlight?”)
+
+* **Behavior**
+
+  * Appears when `Selection.rangeCount > 0` and `range.toString().trim().length ≥ 1`.
+  * **Position** at `range.getBoundingClientRect()` center; add an offset (12–16 px). **Flip/shift** away from edges; never cover the selection. ([MDN Web Docs][14], [Floating UI][5])
+  * **Dismiss** on Esc, click outside, selection cleared, or scroll > 200 px.
+* **Content & copy**
+
+  * Title (visually hidden for SR): “Save highlight”
+  * **Primary button:** “**Save highlight**” (action‑oriented, sentence case per content guidelines). ([Material Design][16])
+  * **Close icon button** with `aria-label="Dismiss"`.
+* **A11y**
+
+  * Use `role="dialog"` with `aria-modal="false"` or a `menu` pattern; move focus into the first control. Return focus to the page on close. Min target 24×24 px. ([MDN Web Docs][8], [W3C][7])
+
+### 3.2 Snackbar (confirmation/Undo)
+
+* Message: “Saved” (or “Deleted”).
+* Action: **Undo** (single text button). Auto‑dismiss. Don’t stack multiple snackbars. ([ui-deploy.com][10])
+
+### 3.3 Popup (toolbar UI)
+
+* **Header**
+
+  * App name (left)
+  * **Summarize** button (right). Disabled if there are **0** highlights.
+* **Highlights list**
+
+  * **Row anatomy**
+
+    * Left: favicon (16–20 px) via `chrome-extension://<id>/_favicon/?pageUrl=<URL>&size=...` (MV3).
+    * Main: **Page title** (single line, ellipsis) + **domain** (subtle)
+    * Below: highlight text (up to 2 lines)
+    * Right: overflow menu (Delete)
+    * Whole row clickable → **open source URL** in a new tab. ([Chrome for Developers][15])
+  * **Keyboard**
+
+    * Tab focuses rows; Enter opens the link; Delete key triggers Delete (announce with `aria-live="polite"`).
+* **Empty state**
+
+  * Headline: “No highlights yet”
+  * Subtext: “Select text on a page and choose **Save highlight**.” (short, direct). ([media.nngroup.com][13])
+* **Summarize panel**
+
+  * Loading: inline spinner + “Summarizing your latest highlights…”
+  * Result: short paragraph; copy button.
+  * Error: “Couldn’t summarize. Check your connection and try again.” (Retry). Use OpenAI Responses API. ([OpenAI Platform][12])
+
+---
+
+## 4) Data model (minimal, local‑only)
+
+```json
+{
+  "id": "uuid",
+  "text": "string",
+  "url": "string",
+  "pageTitle": "string",
+  "createdAt": 1735071112345
+}
+```
+
+* Keep storage to **text + basic metadata** to respect quotas and performance; no per‑site injections after save (out of scope). Use `chrome.storage.local` for items; consider `storage.sync` only for tiny settings (e.g., theme). ([Chrome for Developers][3])
+
+---
+
+## 5) Interaction details & acceptance criteria
+
+### 5.1 On‑page chip
+
+* **Trigger:** Appears within 75 ms after a non‑empty selection; disappears if selection collapses or user scrolls far.
+* **Placement:** Above the selection by default; **flip** below if near the top; **shift** horizontally to avoid clipping; must never cover selected text. ([Floating UI][5])
+* **Keyboard:** Esc to close; Enter to save.
+* **A11y:** Focus first control; `aria-label` on buttons; role `dialog` (`aria-modal=false`) or a menu button pattern—no trap. ([MDN Web Docs][8])
+* **Touch target:** 24×24 px minimum. ([W3C][7])
+
+**Done when:** Selection → chip appears, positioned in view, can be operated entirely by keyboard and mouse; snackbars announce success.
+
+### 5.2 Popup list
+
+* **Sorting:** Strictly newest first.
+* **Row affordances:**
+
+  * Clicking title/row opens the source URL in a new tab.
+  * Overflow → Delete (snackbar **Undo**).
+* **Performance:** 60 fps scrolling for 100–300 items; measure before virtualizing.
+* **A11y:** Landmarks (main), list semantics (`role="list"`; items: `role="listitem"`), visible focus, ARIA labels for delete buttons. ([MDN Web Docs][17])
+
+**Done when:** From a clean install, a user can save, view, delete, and undo delete—all within the popup—without confusion in <15 s, and with screen readers.
+
+### 5.3 Summarize
+
+* **Input selection:** Most recent N items (start with 5–10 to keep prompt short).
+* **States:** idle → loading → success | error.
+* **OpenAI Responses API**: display **model + token** errors clearly; rate-limit with basic debouncing. ([OpenAI Platform][12])
+
+---
+
+## 6) Visual system & content style (light but intentional)
+
+* **Typography:** 14 px base in popup; 12–13 px for secondary metadata.
+* **Density:** 8–12 px vertical rhythm; rows \~64–72 px tall (two-line snippet).
+* **Buttons & labels:** **Sentence case** (“Save highlight”, “Summarize”), short and explicit per content guidelines. ([Material Design][16])
+* **Color & contrast:** Meet WCAG AA for text; snackbars use neutral background with high-contrast text.
+
+---
+
+## 7) Accessibility checklist (minimum viable)
+
+* Keyboard: every control reachable; **Esc** closes popover/popup; **Enter** activates; delete has Undo path.
+* Roles: chip as **non‑modal dialog**/**menu**; list as `role="list"` items; buttons have descriptive `aria-label`s. ([MDN Web Docs][8])
+* Targets ≥ 24×24 px; focus rings always visible and not suppressed. ([W3C][7])
+* Announcements: snackbars use `aria-live="polite"`.
+
+---
+
+## 8) Edge cases & guardrails (so the UX doesn’t break)
+
+* **Selection spanning multiple lines/elements:** Use `getClientRects()` to decide optimal anchor; still center horizontally on the largest rect. ([MDN Web Docs][18])
+* **Near viewport edges / inside scrollables:** flip/shift placement so the chip never goes offscreen (standard anchored overlay behavior). ([Floating UI][5])
+* **Restricted pages:** Don’t attempt to run on Chrome Web Store / chrome:// pages; gracefully show an “Unavailable here” snackbar if the user tries. ([Stack Overflow][19])
+* **iFrames:** If you later choose to support selections inside iframes, you’ll need `all_frames:true` and message passing; not required for MVP, but this is the path. ([Chrome for Developers][20])
+* **Storage pressure:** If reaching local quota, show a friendly message and block new saves until the user deletes something. ([Chrome for Developers][3])
+* **Privacy:** Keep everything local by default; make it explicit if the Summarize feature sends text to OpenAI; link “Data use” in the popup footer. Follow Chrome’s **Protect user privacy** guidance. ([Chrome for Developers][11])
+
+---
+
+## 9) Copy deck (first pass)
+
+* **Chip**:
+
+  * Title (visually hidden): “Save highlight”
+  * Primary: “Save highlight”
+  * Close button: “Dismiss” (aria-label)
+* **Snackbars**:
+
+  * Save: “Saved highlight.” \[Undo]
+  * Delete: “Highlight deleted.” \[Undo]
+* **Popup empty state**:
+
+  * Header: “No highlights yet”
+  * Body: “Select text on a page and choose **Save highlight**.”
+* **Summarize button**: “Summarize” → “Summarizing…” (loading) → result text.
+* **API error**: “Couldn’t summarize. Check your connection and try again.”
+
+(Style: clear, short, **sentence case**.) ([Material Design][16])
+
+---
+
+## 10) Non‑negotiable QA / acceptance tests
+
+* **On‑page chip** appears in ≤ 100 ms after selection; can be saved via **Enter**; disappears on **Esc**.
+* **Positioning** never covers the selected text; remains fully visible near edges (verified with various zoom levels). ([Floating UI][5])
+* **List** renders 200 items at 60 fps; Delete action always shows Undo and restores item if clicked. ([ui-deploy.com][10])
+* **A11y**: Axe/AT tests pass; every action has SR‑readable labels; targets ≥ 24×24 px. ([W3C][7])
+* **Privacy**: Only `activeTab`, `storage`, `scripting` (+ minimal host permissions if needed). No silent network calls except when Summarize is explicitly used. ([Chrome for Developers][21])
+
+---
+
+## 11) Implementation notes (kept minimal; no extra features)
+
+* **Content script** (when active):
+
+  * Listen for `selectionchange`. If selection becomes non‑empty and stable for \~75 ms, show the chip near `range.getBoundingClientRect()`. On Save, call `chrome.runtime.sendMessage` to write into `storage.local`. ([MDN Web Docs][14])
+* **Popup**:
+
+  * On open, `chrome.storage.local.get()` → render newest first; wire Delete → remove, then show snackbar with Undo (restores).
+  * **Favicon**: `chrome-extension://<id>/_favicon/?pageUrl=<url>&size=16`. ([Chrome for Developers][15])
+* **Summary**:
+
+  * Call OpenAI **Responses API** with the last N highlights; simple system prompt (“Summarize these highlights concisely”). Handle rate/timeout errors. ([OpenAI Platform][12])
+
+---
+
+## 12) What we intentionally **did not** add (to honor scope)
+
+* Re‑injecting highlights back into pages after reload;
+* Multi‑page organization (folders/tags), search, pinning;
+* Color themes per highlight;
+* Bulk operations.
+
+All of these could be future iterations; the design above already delivers a crisp, accessible, and privacy‑respectful MVP within your current feature set.
+
+---
+
+### Sources (selection)
+
+* Chrome popup dimensions & behavior; storage quotas; favicons; privacy & security; content scripts; A11y: ([GitHub][1], [Chrome for Developers][2])
+* Selection/Range API & positioning; anchored overlay patterns: ([MDN Web Docs][4], [Floating UI][5], [Popper.js][6])
+* WCAG 2.2 target size: ([W3C][7])
+* Material snackbars & writing style: ([ui-deploy.com][10], [Material Design][16])
+* OpenAI Responses API, rate‑limits: ([OpenAI Platform][12])
+* WAI‑ARIA APG (dialog/menu/list roles): ([MDN Web Docs][8], [W3C][9])
+* Chrome Web Store / restricted pages: ([Stack Overflow][19])
+
+---
